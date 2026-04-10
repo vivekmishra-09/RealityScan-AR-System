@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>REALITYSCAN_OS_v6</title>
+    <title>REALITY_SCAN_OS // v6.0_PRO</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -19,8 +19,9 @@
             <div class="hud-overlay">
                 <div class="reticle"></div>
                 <div class="telemetry">
-                    <p>KERNEL: 6.0.2</p>
-                    <p>SENSORS: <span id="sys-status" class="blink">READY</span></p>
+                    <p class="blink">SYSTEM_ACTIVE</p>
+                    <p>KERNEL_ID: 0x8892_V6</p>
+                    <p>SENSORS: <span id="sys-status" class="status-glow">READY</span></p>
                 </div>
             </div>
 
@@ -36,19 +37,19 @@
             <div class="render-panel glass">
                 <header>
                     <h2 id="obj-id">OBJ_NULL</h2>
-                    <div id="obj-metrics">DIM: 0x0x0 CM | VOL: 0.0L</div>
+                    <div id="obj-metrics">DIM: 0x0x0 CM | VOL: 0.00L</div>
                 </header>
                 <div class="tool-grid">
-                    <button id="toggle-lidar" class="tool-btn">LIDAR_VIEW</button>
+                    <button id="toggle-lidar" class="tool-btn">LIDAR_MODE</button>
                     <button id="gen-anchor" class="tool-btn">GEN_ANCHOR</button>
-                    <button id="btn-exit" class="tool-btn danger">EXIT</button>
+                    <button id="btn-exit" class="tool-btn danger">TERMINATE</button>
                 </div>
             </div>
         </section>
 
         <div id="modal-anchor" class="modal hidden">
             <div class="modal-content glass">
-                <h3>SPATIAL_ANCHOR</h3>
+                <h3>SPATIAL_ANCHOR_GEN</h3>
                 <div id="qr-output"></div>
                 <button id="close-modal" class="main-btn">DISMISS</button>
             </div>
