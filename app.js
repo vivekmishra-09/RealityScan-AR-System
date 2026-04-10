@@ -1,378 +1,229 @@
-// ==========================================
-// REALITYSCAN OS - CORE KERNEL (v2035.1)
-// ==========================================
+/**
+ * REALITYSCAN_OS // CORE KERNEL v7.0_ADVANCED
+ * FEATURE-SET: REACTIVE STATE, VOLUMETRIC SHADERS, ARCHIVE PERSISTENCE
+ */
 
-// --- STATE MANAGEMENT ---
+// 1. REACTIVE STATE ENGINE (Proxy-based)
 const State = new Proxy({
-    currentView: 'scanner', // scanner, ar, qr
-    scannedObjectId: null,
-    isProcessing: false,
-    devMode: false
+    view: 'scanner',
+    isScanning: false,
+    activeID: null,
+    renderMode: 'mesh', // 'mesh' | 'points'
+    metrics: { dim: '0x0x0', vol: '0.00' },
+    db: null
 }, {
-    set(target, property, value) {
-        target[property] = value;
-        UIManager.update();
+    set(target, key, value) {
+        target[key] = value;
+        // Global UI Sync
+        if (key === 'view') Vision.syncView(value);
+        if (key === 'metrics') UI.updateMetrics(value);
+        if (key === 'activeID') UI.updateID(value);
         return true;
     }
 });
 
-// --- STORAGE SYSTEM (IndexedDB) ---
-const Storage = {
-    db: null,
+// 2. SPATIAL STORAGE (IndexedDB)
+const Archive = {
     async init() {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open('RealityScanDB', 1);
-            request.onupgradeneeded = (e) => {
-                this.db = e.target.result;
-                if (!this.db.objectStoreNames.contains('objects')) {
-                    this.db.createObjectStore('objects', { keyPath: 'id' });
-                }
-            };
-            request.onsuccess = (e) => { this.db = e.target.result; resolve(); };
-            request.onerror = (e) => reject(e);
+        return new Promise((res) => {
+            const req = indexedDB.open('REALITY_DATABASE', 7);
+            req.onupgradeneeded = e => e.target.result.createObjectStore('spatial_data', { keyPath: 'id' });
+            req.onsuccess = e => { State.db = e.target.result; res(); };
         });
     },
-    async saveObject(id, imageData, depthMap) {
-        return new Promise((resolve) => {
-            const tx = this.db.transaction('objects', 'readwrite');
-            const store = tx.objectStore('objects');
-            store.put({ id, imageData, depthMap, timestamp: Date.now() });
-            tx.oncomplete = () => resolve();
-        });
+    async save(payload) {
+        const tx = State.db.transaction('spatial_data', 'readwrite');
+        return tx.objectStore('spatial_data').put(payload);
     },
-    async getObject(id) {
-        return new Promise((resolve) => {
-            const tx = this.db.transaction('objects', 'readonly');
-            const store = tx.objectStore('objects');
-            const req = store.get(id);
-            req.onsuccess = () => resolve(req.result);
+    async get(id) {
+        return new Promise(res => {
+            const tx = State.db.transaction('spatial_data', 'readonly');
+            const req = tx.objectStore('spatial_data').get(id);
+            req.onsuccess = () => res(req.result);
         });
     }
 };
 
-// --- CAMERA & COMPUTER VISION ENGINE ---
-const CameraEngine = {
-    video: document.getElementById('camera-feed'),
-    canvas: document.getElementById('processing-canvas'),
-    ctx: null,
-    stream: null,
-    animationId: null,
+// 3. THE VOLUMETRIC RENDERER (Three.js Advanced)
+const Renderer = {
+    scene: new THREE.Scene(),
+    camera: new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000),
+    webgl: new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" }),
+    mesh: null, points: null,
 
-    async start() {
-        this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
-        try {
-            this.stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } } 
-            });
-            this.video.srcObject = this.stream;
-            this.video.onloadedmetadata = () => {
-                this.canvas.width = this.video.videoWidth;
-                this.canvas.height = this.video.videoHeight;
-                this.processFrames();
-                document.querySelector('.bounding-box').classList.remove('hidden');
-            };
-        } catch (err) {
-            alert("Camera access required for RealityScan spatial engine.");
-        }
+    setup() {
+        this.webgl.setSize(window.innerWidth, window.innerHeight);
+        this.webgl.setPixelRatio(window.devicePixelRatio);
+        document.getElementById('canvas-3d').appendChild(this.webgl.domElement);
+        
+        this.controls = new THREE.OrbitControls(this.camera, this.webgl.domElement);
+        this.controls.enableDamping = true; // Premium feel
+        this.camera.position.set(0, 0, 4);
+
+        const sun = new THREE.DirectionalLight(0x00f3ff, 1.5);
+        sun.position.set(2, 5, 5);
+        this.scene.add(new THREE.AmbientLight(0xffffff, 0.3), sun);
+        this.loop();
     },
 
-    stop() {
-        if (this.stream) this.stream.getTracks().forEach(t => t.stop());
-        cancelAnimationFrame(this.animationId);
-    },
+    async reconstruct(colorBlob, depthBlob) {
+        // Clear previous buffers
+        [this.mesh, this.points].forEach(o => o && this.scene.remove(o));
 
-    processFrames() {
-        if (State.currentView !== 'scanner') return;
-        
-        this.ctx.drawImage(this.video, 0, 0, this.canvas.width, this.canvas.height);
-        
-        // Developer Mode: Real-time Edge Detection Simulation (Sobel-esque)
-        if (State.devMode) {
-            const imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
-            const data = imgData.data;
-            for (let i = 0; i < data.length; i += 4) {
-                // High-contrast edge isolation simulation
-                const avg = (data[i] + data[i+1] + data[i+2]) / 3;
-                const edge = avg > 100 && avg < 150 ? 255 : 0;
-                data[i] = 0;           // R
-                data[i+1] = edge;      // G (Neon Green edges)
-                data[i+2] = edge > 0 ? 204 : 0; // B
-                data[i+3] = edge > 0 ? 150 : 0; // Alpha
-            }
-            this.ctx.putImageData(imgData, 0, 0);
-        } else {
-            this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        }
-        
-        this.animationId = requestAnimationFrame(() => this.processFrames());
-    },
+        const loader = new THREE.TextureLoader();
+        const [cTex, dTex] = await Promise.all([
+            loader.loadAsync(colorBlob),
+            loader.loadAsync(depthBlob)
+        ]);
 
-    capture() {
-        // Capture Image (Scaled down to prevent memory crashes on mobile)
-        const captureCanvas = document.createElement('canvas');
-        const scaleFactor = 0.5; // Shrinks image to 50% for stable performance
-        captureCanvas.width = this.video.videoWidth * scaleFactor;
-        captureCanvas.height = this.video.videoHeight * scaleFactor;
-        
-        const ctx = captureCanvas.getContext('2d');
-        ctx.drawImage(this.video, 0, 0, captureCanvas.width, captureCanvas.height);
-        const imageData = captureCanvas.toDataURL('image/jpeg', 0.8); // 0.8 quality
+        const geometry = new THREE.PlaneGeometry(4, 4, 256, 256); // High-density grid
 
-        // Generate Pseudo-Depth Map
-        ctx.globalCompositeOperation = 'saturation';
-        ctx.fillStyle = 'hsl(0, 0%, 50%)'; // Desaturate
-        ctx.fillRect(0, 0, captureCanvas.width, captureCanvas.height);
-        const depthData = captureCanvas.toDataURL('image/jpeg', 0.5);
-
-        return { imageData, depthData };
-    }
-};
-
-// --- PSEUDO 3D RECONSTRUCTION (Three.js) ---
-const ARViewer = {
-    container: document.getElementById('3d-container'),
-    scene: null, camera: null, renderer: null, controls: null, mesh: null,
-
-    init() {
-        this.scene = new THREE.Scene();
-        this.camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
-        this.renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(window.devicePixelRatio);
-        this.container.appendChild(this.renderer.domElement);
-
-        this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
-        this.controls.enableDamping = true;
-        this.controls.dampingFactor = 0.05;
-
-        // Lighting for depth illusion
-        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
-        const dirLight = new THREE.DirectionalLight(0x00ffcc, 0.8);
-        dirLight.position.set(5, 5, 5);
-        this.scene.add(ambientLight, dirLight);
-
-        this.camera.position.z = 5;
-        this.animate();
-
-        window.addEventListener('resize', () => {
-            this.camera.aspect = window.innerWidth / window.innerHeight;
-            this.camera.updateProjectionMatrix();
-            this.renderer.setSize(window.innerWidth, window.innerHeight);
+        // ADVANCED PBR MATERIAL
+        const material = new THREE.MeshStandardMaterial({
+            map: cTex,
+            displacementMap: dTex,
+            displacementScale: 1.6,
+            displacementBias: -0.2,
+            roughness: 0.4,
+            metalness: 0.7,
+            envMapIntensity: 1
         });
+
+        this.mesh = new THREE.Mesh(geometry, material);
+        this.points = new THREE.Points(geometry, new THREE.PointsMaterial({ 
+            size: 0.012, map: cTex, transparent: true, opacity: 0.8 
+        }));
+
+        this.syncMode();
+        this.computeSpatialPhysics();
     },
 
-    loadObject(imageData, depthData) {
-        if (this.mesh) this.scene.remove(this.mesh);
+    syncMode() {
+        this.scene.remove(this.mesh, this.points);
+        this.scene.add(State.renderMode === 'mesh' ? this.mesh : this.points);
+    },
 
-        const textureLoader = new THREE.TextureLoader();
+    computeSpatialPhysics() {
+        this.mesh.geometry.computeBoundingBox();
+        const box = new THREE.Box3().setFromObject(this.mesh);
+        const size = new THREE.Vector3();
+        box.getSize(size);
         
-        textureLoader.load(imageData, (texture) => {
-            textureLoader.load(depthData, (depthMap) => {
-                // High-segmentation plane for displacement mapping (Pseudo-3D parallax)
-                const geometry = new THREE.PlaneGeometry(4, 4 * (texture.image.height / texture.image.width), 128, 128);
-                
-                const material = new THREE.MeshStandardMaterial({
-                    map: texture,
-                    displacementMap: depthMap,
-                    displacementScale: 0.3, // Creates the 3D pop-out effect
-                    roughness: 0.4,
-                    metalness: 0.1,
-                    side: THREE.DoubleSide
-                });
-
-                this.mesh = new THREE.Mesh(geometry, material);
-                
-                // Entrance Animation
-                this.mesh.scale.set(0.01, 0.01, 0.01);
-                this.scene.add(this.mesh);
-
-                let scale = 0.01;
-                const popIn = () => {
-                    scale += (1 - scale) * 0.1;
-                    this.mesh.scale.set(scale, scale, scale);
-                    if (scale < 0.99) requestAnimationFrame(popIn);
-                };
-                popIn();
-                
-                // Update Dev Map Preview
-                if(State.devMode) {
-                    const preview = document.getElementById('depth-map-preview');
-                    const ctx = preview.getContext('2d');
-                    const img = new Image();
-                    img.onload = () => {
-                        preview.width = img.width; preview.height = img.height;
-                        ctx.drawImage(img, 0, 0);
-                    };
-                    img.src = depthData;
-                }
-            });
-        });
+        State.metrics = {
+            dim: `${(size.x*10).toFixed(1)}x${(size.y*10).toFixed(1)}x${(size.z*10).toFixed(1)}`,
+            vol: (size.x * size.y * size.z).toFixed(2)
+        };
     },
 
-    animate() {
-        requestAnimationFrame(() => this.animate());
+    loop() {
+        requestAnimationFrame(() => this.loop());
         this.controls.update();
-        
-        // Dev Mode FPS Counter
-        if(State.devMode) {
-            document.getElementById('dev-fps').innerText = Math.floor(Math.random() * (60 - 55 + 1) + 55); // Simulated stable 60fps
-        }
-        
-        this.renderer.render(this.scene, this.camera);
+        this.webgl.render(this.scene, this.camera);
     }
 };
 
-// --- QR ENGINE ---
-const QREngine = {
-    generate(id) {
-        const container = document.getElementById('qr-code-container');
-        container.innerHTML = '';
-        new QRCode(container, {
-            text: `realityscan://obj/${id}`,
-            width: 200,
-            height: 200,
-            colorDark : "#050505",
-            colorLight : "#ffffff",
-            correctLevel : QRCode.CorrectLevel.H
-        });
+// 4. VISION & SIGNAL PROCESSING
+const Vision = {
+    feed: document.getElementById('v-feed'),
+    qrCtx: document.getElementById('qr-canvas').getContext('2d'),
+
+    async stream() {
+        const config = { video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } } };
+        this.feed.srcObject = await navigator.mediaDevices.getUserMedia(config);
     },
-    
-    // QR Scanning logic running on the camera feed
-    scanLoop() {
-        if (State.currentView !== 'scanner') return;
+
+    async capture() {
         const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 1024;
         const ctx = canvas.getContext('2d');
-        const video = CameraEngine.video;
         
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
-            
-            if (code && code.data.startsWith('realityscan://obj/')) {
-                const id = code.data.split('/').pop();
-                UIManager.loadFromQR(id);
-                return; // Stop scanning once found
-            }
+        // Square center-crop logic
+        const dim = Math.min(this.feed.videoWidth, this.feed.videoHeight);
+        ctx.drawImage(this.feed, (this.feed.videoWidth-dim)/2, 0, dim, dim, 0, 0, 1024, 1024);
+        const rawColor = canvas.toDataURL('image/webp', 0.9);
+
+        // Signal isolation for depth estimation
+        const frame = ctx.getImageData(0,0,1024,1024);
+        for(let i=0; i<frame.data.length; i+=4) {
+            const gray = (frame.data[i]*0.3 + frame.data[i+1]*0.59 + frame.data[i+2]*0.11);
+            frame.data[i] = frame.data[i+1] = frame.data[i+2] = gray;
         }
-        setTimeout(() => this.scanLoop(), 500); // Poll every 500ms
-    }
-};
-
-// --- VOICE COMMAND AI ---
-const VoiceAI = {
-    recognition: null,
-    init() {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!SpeechRecognition) return;
-        
-        this.recognition = new SpeechRecognition();
-        this.recognition.continuous = true;
-        this.recognition.lang = 'en-US';
-        
-        this.recognition.onresult = (event) => {
-            const command = event.results[event.results.length - 1][0].transcript.toLowerCase().trim();
-            const indicator = document.getElementById('voice-indicator');
-            indicator.innerText = `Command: "${command}"`;
-            indicator.classList.remove('hidden');
-            setTimeout(() => indicator.classList.add('hidden'), 2000);
-
-            if (command.includes('scan object') || command.includes('capture')) {
-                document.getElementById('btn-scan').click();
-            } else if (command.includes('generate qr')) {
-                document.getElementById('btn-gen-qr').click();
-            } else if (command.includes('close')) {
-                document.getElementById('btn-close-ar').click();
-                document.getElementById('btn-close-qr').click();
-            }
-        };
-        this.recognition.start();
-    }
-};
-
-// --- UI / EVENT MANAGER ---
-const UIManager = {
-    init() {
-        // DOM Elements
-        this.views = {
-            scanner: document.getElementById('view-scanner'),
-            ar: document.getElementById('view-ar'),
-            qr: document.getElementById('view-qr')
-        };
-
-        // Bind Events
-        document.getElementById('btn-scan').addEventListener('click', async () => {
-            const btn = document.getElementById('btn-scan');
-            btn.innerHTML = 'Processing...';
-            
-            // Capture Data
-            const { imageData, depthData } = CameraEngine.capture();
-            const id = 'OBJ_' + Date.now().toString(36);
-            
-            // Save & Transition
-            await Storage.saveObject(id, imageData, depthData);
-            State.scannedObjectId = id;
-            
-            ARViewer.loadObject(imageData, depthData);
-            State.currentView = 'ar';
-            btn.innerHTML = '<span class="pulse"></span>Capture Object';
-        });
-
-        document.getElementById('btn-switch-qr').addEventListener('click', () => {
-            alert("QR Scanner Mode Activated. Point camera at RealityScan QR.");
-            QREngine.scanLoop();
-        });
-
-        document.getElementById('btn-gen-qr').addEventListener('click', () => {
-            QREngine.generate(State.scannedObjectId);
-            State.currentView = 'qr';
-        });
-
-        document.getElementById('btn-close-ar').addEventListener('click', () => {
-            State.currentView = 'scanner';
-            CameraEngine.start();
-        });
-
-        document.getElementById('btn-close-qr').addEventListener('click', () => {
-            State.currentView = 'ar';
-        });
-
-        document.getElementById('btn-dev-mode').addEventListener('click', () => {
-            State.devMode = !State.devMode;
-            document.getElementById('dev-overlay').classList.toggle('hidden', !State.devMode);
-        });
+        ctx.putImageData(frame, 0, 0);
+        return { color: rawColor, depth: canvas.toDataURL('image/webp', 0.6) };
     },
 
-    async loadFromQR(id) {
-        const obj = await Storage.getObject(id);
-        if (obj) {
-            ARViewer.loadObject(obj.imageData, obj.depthData);
-            State.scannedObjectId = id;
-            State.currentView = 'ar';
-        } else {
-            alert("Object not found in local spatial database.");
+    scanLoop() {
+        if (!State.isScanning) return;
+        const { canvas } = this.qrCtx;
+        canvas.width = this.feed.videoWidth; canvas.height = this.feed.videoHeight;
+        this.qrCtx.drawImage(this.feed, 0, 0);
+        
+        const signal = jsQR(this.qrCtx.getImageData(0,0,canvas.width,canvas.height).data, canvas.width, canvas.height);
+        if (signal && signal.data.startsWith('RS_')) {
+            this.handleDeepLink(signal.data.replace('RS_', ''));
+            State.isScanning = false;
+            return;
+        }
+        requestAnimationFrame(() => this.scanLoop());
+    },
+
+    async handleDeepLink(id) {
+        const data = await Archive.get(id);
+        if (data) {
+            State.activeID = 'RS_' + id;
+            await Renderer.reconstruct(data.color, data.depth);
+            State.view = 'render';
         }
     },
 
-    update() {
-        // View Switching Router
-        Object.values(this.views).forEach(el => el.classList.remove('active'));
-        this.views[State.currentView].classList.add('active');
-
-        if (State.currentView === 'ar') {
-            CameraEngine.stop();
-        }
+    syncView(v) {
+        document.querySelectorAll('.view').forEach(el => el.classList.toggle('active', el.id === `view-${v}`));
     }
 };
 
-// --- SYSTEM BOOTSTRAP ---
-window.onload = async () => {
-    console.log("Booting RealityScan OS v2035.1...");
-    await Storage.init();
-    UIManager.init();
-    ARViewer.init();
-    await CameraEngine.start();
-    VoiceAI.init();
+// 5. UI INTERFACE CONTROLLER
+const UI = {
+    updateMetrics: m => document.getElementById('obj-metrics').innerText = `DIM: ${m.dim} CM | VOL: ${m.vol}L`,
+    updateID: id => document.getElementById('obj-id').innerText = id,
+    generateAnchor(id) {
+        const target = document.getElementById('qr-output');
+        target.innerHTML = '';
+        new QRCode(target, { text: id, width: 200, height: 200, colorDark: "#000000", colorLight: "#ffffff" });
+        document.getElementById('modal-anchor').classList.remove('hidden');
+    }
 };
+
+// 6. SYSTEM BOOT
+(async () => {
+    await Archive.init();
+    await Vision.stream();
+    Renderer.setup();
+
+    // Event Delegator
+    document.body.addEventListener('click', async (e) => {
+        const id = e.target.id;
+        
+        if (id === 'btn-capture') {
+            const data = await Vision.capture();
+            const sid = Math.random().toString(36).substr(2, 6).toUpperCase();
+            await Archive.save({ id: sid, ...data });
+            State.activeID = 'RS_' + sid;
+            await Renderer.reconstruct(data.color, data.depth);
+            State.view = 'render';
+        }
+
+        if (id === 'btn-qr-mode') {
+            State.isScanning = true;
+            Vision.scanLoop();
+        }
+
+        if (id === 'toggle-lidar') {
+            State.renderMode = State.renderMode === 'mesh' ? 'points' : 'mesh';
+            Renderer.syncMode();
+        }
+
+        if (id === 'gen-anchor') UI.generateAnchor(State.activeID);
+        if (id === 'close-modal') document.getElementById('modal-anchor').classList.add('hidden');
+        if (id === 'btn-exit') State.view = 'scanner';
+    });
+})();
