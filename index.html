@@ -3,64 +3,57 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>RealityScan AR System</title>
+    <title>REALITYSCAN_OS_v6</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://unpkg.com/jsqr/dist/jsQR.js"></script>
 </head>
 <body>
-    <div id="app-container">
-        
+    <div id="os-container">
         <section id="view-scanner" class="view active">
-            <div class="video-wrapper">
-                <video id="camera-feed" autoplay playsinline></video>
-                <canvas id="processing-canvas"></canvas>
-                <div class="holographic-overlay"></div>
-                <div class="bounding-box hidden">
-                    <div class="corner tl"></div><div class="corner tr"></div>
-                    <div class="corner bl"></div><div class="corner br"></div>
+            <video id="v-feed" autoplay playsinline></video>
+            <canvas id="qr-canvas" class="overlay"></canvas>
+            
+            <div class="hud-overlay">
+                <div class="reticle"></div>
+                <div class="telemetry">
+                    <p>KERNEL: 6.0.2</p>
+                    <p>SENSORS: <span id="sys-status" class="blink">READY</span></p>
                 </div>
             </div>
-            <div class="floating-controls glass">
-                <button id="btn-scan" class="btn-primary"><span class="pulse"></span>Capture Object</button>
-                <button id="btn-switch-qr" class="btn-secondary">Scan QR</button>
+
+            <nav class="action-bar glass">
+                <button id="btn-qr-mode" class="side-btn">READ_QR</button>
+                <button id="btn-capture" class="main-btn">CAPTURE_SPATIAL</button>
+                <button id="btn-archive" class="side-btn">ARCHIVE</button>
+            </nav>
+        </section>
+
+        <section id="view-render" class="view">
+            <div id="canvas-3d"></div>
+            <div class="render-panel glass">
+                <header>
+                    <h2 id="obj-id">OBJ_NULL</h2>
+                    <div id="obj-metrics">DIM: 0x0x0 CM | VOL: 0.0L</div>
+                </header>
+                <div class="tool-grid">
+                    <button id="toggle-lidar" class="tool-btn">LIDAR_VIEW</button>
+                    <button id="gen-anchor" class="tool-btn">GEN_ANCHOR</button>
+                    <button id="btn-exit" class="tool-btn danger">EXIT</button>
+                </div>
             </div>
         </section>
 
-        <section id="view-ar" class="view">
-            <div id="3d-container"></div>
-            <div class="floating-panel glass top-right">
-                <button id="btn-dev-mode" class="btn-icon">⚙️</button>
-                <button id="btn-gen-qr" class="btn-icon">🔗</button>
-                <button id="btn-close-ar" class="btn-icon">✖</button>
+        <div id="modal-anchor" class="modal hidden">
+            <div class="modal-content glass">
+                <h3>SPATIAL_ANCHOR</h3>
+                <div id="qr-output"></div>
+                <button id="close-modal" class="main-btn">DISMISS</button>
             </div>
-            
-            <div id="dev-overlay" class="glass hidden">
-                <h3>Debug Metrics</h3>
-                <p>FPS: <span id="dev-fps">0</span></p>
-                <p>Polygons: <span id="dev-poly">2048</span></p>
-                <p>Mesh Mode: Pseudo-Displacement</p>
-                <canvas id="depth-map-preview"></canvas>
-            </div>
-        </section>
-
-        <section id="view-qr" class="view glass-modal">
-            <div class="qr-card glass">
-                <h2>Entity Anchored</h2>
-                <div id="qr-code-container"></div>
-                <p class="subtitle">Scan to instantiate AR Object</p>
-                <button id="btn-close-qr" class="btn-secondary">Dismiss</button>
-            </div>
-        </section>
-
-        <div id="voice-indicator" class="glass hidden">
-            🎙️ Listening...
         </div>
-
     </div>
-
     <script type="module" src="app.js"></script>
 </body>
 </html>
