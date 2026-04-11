@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>REALITY_SCAN_OS // v6.0_PRO</title>
+    <title>REALITY_SCAN_OS // v7.0_PRO</title>
     <link rel="stylesheet" href="styles.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -20,15 +20,16 @@
                 <div class="reticle"></div>
                 <div class="telemetry">
                     <p class="blink">SYSTEM_ACTIVE</p>
-                    <p>KERNEL_ID: 0x8892_V6</p>
+                    <p>KERNEL_ID: 0x8892_V7</p>
                     <p>SENSORS: <span id="sys-status" class="status-glow">READY</span></p>
                 </div>
             </div>
 
             <nav class="action-bar glass">
-                <button id="btn-qr-mode" class="side-btn">READ_QR</button>
+                <input type="file" id="file-input" accept="image/*" hidden>
+                <button id="btn-upload" class="side-btn">IMPORT_OBJ</button>
                 <button id="btn-capture" class="main-btn">CAPTURE_SPATIAL</button>
-                <button id="btn-archive" class="side-btn">ARCHIVE</button>
+                <button id="btn-qr-mode" class="side-btn">SCAN_QR</button>
             </nav>
         </section>
 
@@ -51,7 +52,10 @@
             <div class="modal-content glass">
                 <h3>SPATIAL_ANCHOR_GEN</h3>
                 <div id="qr-output"></div>
-                <button id="close-modal" class="main-btn">DISMISS</button>
+                <div class="modal-actions">
+                    <button id="btn-download-qr" class="side-btn">DOWNLOAD_QR</button>
+                    <button id="close-modal" class="main-btn">DISMISS</button>
+                </div>
             </div>
         </div>
     </div>
